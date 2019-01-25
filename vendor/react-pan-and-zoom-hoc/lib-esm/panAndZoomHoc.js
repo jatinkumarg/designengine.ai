@@ -49,42 +49,42 @@ export default function panAndZoom(WrappedComponent) {
                     //event.stopPropagation();
                     //return;
 
-                    var _a = _this.props, onPanAndZoom = _a.onPanAndZoom, renderOnChange = _a.renderOnChange, onZoom = _a.onZoom;
-                    var x = _this.props.x;
-                    var y = _this.props.y;
-                    var scale = _this.props.scale;
-                    var scaleFactor = _this.props.scaleFactor;
-                    var minScale = _this.props.minScale;
-                    var maxScale = _this.props.maxScale;
-                    if (x !== undefined && y !== undefined && scale !== undefined && scaleFactor !== undefined && minScale !== undefined && maxScale !== undefined) {
-                        var deltaY = event.deltaY;
-                        var newScale = deltaY < 0 ? Math.min((scale + _this.ds) * scaleFactor, maxScale) : Math.max((scale + _this.ds) / scaleFactor, minScale);
-                        var factor = newScale / (scale + _this.ds);
-                        if (factor !== 1) {
-                            var target = ReactDOM.findDOMNode(_this);
-                            if (target !== null && 'getBoundingClientRect' in target) {
-                                var _b = target.getBoundingClientRect(), top_1 = _b.top, left = _b.left, width = _b.width, height = _b.height;
-                                var _c = _this.normalizeTouchPosition(event, target), clientX = _c.clientX, clientY = _c.clientY;
-                                var dx = (clientX / width - 0.5) / (scale + _this.ds);
-                                var dy = (clientY / height - 0.5) / (scale + _this.ds);
-                                var sdx = dx * (1 - 1 / factor);
-                                var sdy = dy * (1 - 1 / factor);
-                                _this.dx += sdx;
-                                _this.dy += sdy;
-                                _this.ds = newScale - scale;
-                                if (onPanAndZoom) {
-                                    onPanAndZoom(x + _this.dx, y + _this.dy, scale + _this.ds, event);
-                                }
-                                if (renderOnChange) {
-                                    _this.forceUpdate();
-                                }
-                            }
-                        }
-                    }
-                    if (onZoom) {
-                        onZoom(x, y, scale, event);
-                    }
-                    event.preventDefault();
+//                     var _a = _this.props, onPanAndZoom = _a.onPanAndZoom, renderOnChange = _a.renderOnChange, onZoom = _a.onZoom;
+//                     var x = _this.props.x;
+//                     var y = _this.props.y;
+//                     var scale = _this.props.scale;
+//                     var scaleFactor = _this.props.scaleFactor;
+//                     var minScale = _this.props.minScale;
+//                     var maxScale = _this.props.maxScale;
+//                     if (x !== undefined && y !== undefined && scale !== undefined && scaleFactor !== undefined && minScale !== undefined && maxScale !== undefined) {
+//                         var deltaY = event.deltaY;
+//                         var newScale = deltaY < 0 ? Math.min((scale + _this.ds) * scaleFactor, maxScale) : Math.max((scale + _this.ds) / scaleFactor, minScale);
+//                         var factor = newScale / (scale + _this.ds);
+//                         if (factor !== 1) {
+//                             var target = ReactDOM.findDOMNode(_this);
+//                             if (target !== null && 'getBoundingClientRect' in target) {
+//                                 var _b = target.getBoundingClientRect(), top_1 = _b.top, left = _b.left, width = _b.width, height = _b.height;
+//                                 var _c = _this.normalizeTouchPosition(event, target), clientX = _c.clientX, clientY = _c.clientY;
+//                                 var dx = (clientX / width - 0.5) / (scale + _this.ds);
+//                                 var dy = (clientY / height - 0.5) / (scale + _this.ds);
+//                                 var sdx = dx * (1 - 1 / factor);
+//                                 var sdy = dy * (1 - 1 / factor);
+//                                 _this.dx += sdx;
+//                                 _this.dy += sdy;
+//                                 _this.ds = newScale - scale;
+//                                 if (onPanAndZoom) {
+//                                     onPanAndZoom(x + _this.dx, y + _this.dy, scale + _this.ds, event);
+//                                 }
+//                                 if (renderOnChange) {
+//                                     _this.forceUpdate();
+//                                 }
+//                             }
+//                         }
+//                     }
+//                     if (onZoom) {
+//                         onZoom(x, y, scale, event);
+//                     }
+//                     event.preventDefault();
                 };
                 _this.panning = false;
                 _this.panLastX = 0;

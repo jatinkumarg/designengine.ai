@@ -8,7 +8,6 @@ import ReactNotifications from 'react-browser-notifications';
 import CopyToClipboard from 'react-copy-to-clipboard';
 import FontAwesome from 'react-fontawesome';
 import Moment from 'react-moment';
-import panAndZoomHoc from 'react-pan-and-zoom-hoc';
 import { connect } from 'react-redux';
 import { Column, Row } from 'simple-flexbox';
 
@@ -49,7 +48,6 @@ const ZOOM_NOTCHES = [
 const artboardsWrapper = React.createRef();
 const canvasWrapper = React.createRef();
 const canvas = React.createRef();
-const InteractiveDiv = panAndZoomHoc('div');
 
 
 const buildSlicePreviews = (upload, slice)=> {
@@ -66,6 +64,31 @@ const buildSlicePreviews = (upload, slice)=> {
 	});
 
 	return (slices);
+};
+
+const normalizeTouchPosition = (event, parent)=> {
+	const position = {
+		clientX : event.clientX,
+		clientY : event.clientY
+	};
+
+	while (parent.offsetParent) {
+		position.clientX -= parent.offsetLeft - parent.scrollLeft;
+		position.clientY -= parent.offsetTop - parent.scrollTop;
+		parent = parent.offsetParent;
+	}
+
+	console.log('InspectorPage.normalizeTouchPosition()', position);
+
+	return (position);
+};
+
+const transformPoint = (baseCoords, panCoords, scale)=> {
+// 		console.log('InspectorPage.transformPoint()', x, y);
+	return ({
+		x : 0.5 + (scale * (baseCoords.x - panCoords.x)),
+		y : 0.5 + (scale * (baseCoords.y - panCoords.y))
+	});
 };
 
 const mapStateToProps = (state, ownProps)=> {
@@ -245,42 +268,45 @@ class InspectorPage extends Component {
 		super(props);
 
 		this.state = {
-			section      : window.location.pathname.substr(1).split('/').shift(),
-			upload       : null,
-			slice        : null,
-			hoverSlice   : null,
-			offset       : null,
-			hoverOffset  : null,
-			selectedTab  : 0,
-			tabs         : [],
-			scale        : 0.5,
-			panCoords    : {
-				x : 0.5,
-				y : 0.5,
+			section     : window.location.pathname.substr(1).split('/').shift(),
+			upload      : null,
+			slice       : null,
+			hoverSlice  : null,
+			offset      : null,
+			hoverOffset : null,
+			selectedTab : 0,
+			tabs        : [],
+			scale       : 0.5,
+			panCoords   : {
+				x    : 0.5,
+				y    : 0.5,
+				incX : 0,
+				incY : 0
 			},
-			viewport     : {
+			viewport    : {
+				oldX   : 0,
+				oldY   : 0,
+				x      : 0,
+				y      : 0,
 				width  : 0,
-				height : 0
+				height : 0,
+				scale  : 0
 			},
-			scrollOffset : {
-				x : 0,
-				y : 0
-			},
-			uploading    : false,
-			shownInvite  : true,
-			sentInvites  : false,
-			restricted   : false,
-			scrolling    : false,
-			code         : {
+			uploading   : false,
+			shownInvite : true,
+			sentInvites : false,
+			restricted  : false,
+			scrolling   : false,
+			code        : {
 				html   : '',
 				syntax : ''
 			},
-			processing   : {
+			processing  : {
 				state   : 3,
 				message : ''
 			},
-			percent      : 0,
-			tooltip      : ''
+			percent     : 0,
+			tooltip     : ''
 		};
 
 		this.processingInterval = null;
@@ -311,6 +337,8 @@ class InspectorPage extends Component {
 		}
 
 		document.addEventListener('keydown', this.handleKeyDown.bind(this));
+		document.addEventListener('mousedown', this.handleMouseDown.bind(this));
+		document.addEventListener('wheel', this.handleWheelStart.bind(this));
 	}
 
 	shouldComponentUpdate(nextProps, nextState, nextContext) {
@@ -332,7 +360,7 @@ class InspectorPage extends Component {
 // 		console.log('InspectorPage.componentDidUpdate()', prevProps, this.props, this.state);
 
 		const { deeplink, processing } = this.props;
-		const { upload, viewport, scale } = this.state;
+		const { upload, panCoords, viewport, scale } = this.state;
 
 		if (deeplink && deeplink !== prevProps.deeplink && deeplink.uploadID !== 0) {
 			this.onRefreshUpload();
@@ -356,15 +384,16 @@ class InspectorPage extends Component {
 		}
 
 		if (artboardsWrapper.current && (viewport.width !== artboardsWrapper.current.clientWidth || viewport.height !== artboardsWrapper.current.clientHeight)) {
-			const p1 = this.transformPoint({ x : 0.5, y : 0.5 });
+			const p1 = transformPoint({ x : 0.5, y : 0.5 }, panCoords, scale);
 			this.setState({
-				viewport     : {
+				viewport : {
+					oldX   : viewport.oldX,
+					oldY   : viewport.oldY,
+					x      : -Math.round((p1.x * artboardsWrapper.current.clientWidth) + ((artboardsWrapper.current.clientWidth * -0.5) * scale)),
+					y      : -Math.round((p1.y * artboardsWrapper.current.clientHeight) + ((artboardsWrapper.current.clientHeight * -0.5) * scale)),
 					width  : artboardsWrapper.current.clientWidth,
-					height : artboardsWrapper.current.clientHeight
-				},
-				scrollOffset : {
-					x : -Math.round((p1.x * artboardsWrapper.current.clientWidth) + ((artboardsWrapper.current.clientWidth * -0.5) * scale)),
-					y : -Math.round((p1.y * artboardsWrapper.current.clientHeight) + ((artboardsWrapper.current.clientHeight * -0.5) * scale))
+					height : artboardsWrapper.current.clientHeight,
+					scale  : viewport.scale
 				}
 			});
 		}
@@ -382,6 +411,8 @@ class InspectorPage extends Component {
 		this.scrollInterval = null;
 
 		document.removeEventListener('keydown', this.handleKeyDown.bind(this));
+		document.removeEventListener('mousedown', this.handleMouseDown.bind(this));
+		document.removeEventListener('wheel', this.handleWheelStart.bind(this));
 	}
 
 	handleArtboardRollOut = (event)=> {
@@ -489,49 +520,100 @@ class InspectorPage extends Component {
 		}
 	};
 
-	handlePanAndZoom = (x, y, scale)=> {
-// 		console.log('InspectorPage.handlePanAndZoom()', x, y, scale);
+	handleMouseDown = (event)=> {
+		console.log('InspectorPage.handleMouseDown()', event);
 
-		const { viewport } = this.state;
-		const p1 = this.transformPoint({ x : 0.5, y : 0.5 });
+		if (!this.state.scrolling) {
+			const scrolling = true;
+			const { clientX, clientY } = normalizeTouchPosition(event, artboardsWrapper);
 
-		this.setState({
-			panCoords    : { x, y },
-			scale        : Math.min(Math.max(scale, ZOOM_NOTCHES[0]), ZOOM_NOTCHES.slice(-1)[0]),
-			scrollOffset : {
-				x : -Math.round((p1.x * viewport.width) + ((viewport.width * -0.5) * scale)),
-				y : -Math.round((p1.y * viewport.height) + ((viewport.height * -0.5) * scale))
-			},
-			tooltip      : `${Math.round(Math.min(Math.max(scale, ZOOM_NOTCHES[0]), ZOOM_NOTCHES.slice(-1)[0]) * 100)}%`
-		});
+			let { viewport } = this.state;
+			viewport.oldX = clientX;
+			viewport.oldY = clientY;
 
-		setTimeout(()=> {
-			this.setState({ tooltip : '' });
-		}, 1000);
+			document.addEventListener('mousemove', this.handleMouseMove.bind(this));
+			document.addEventListener('mouseup', this.handleMouseUp.bind(this));
+
+			this.setState({ viewport, scrolling });
+		}
 	};
 
-	handlePanEnd = (event)=> {
-// 		console.log('InspectorPage.handlePanEnd()', event);
-		this.setState({ scrolling : false });
+	handleMouseMove = (event)=> {
+// 		console.log('InspectorPage.handleMouseMove()', event);
+
+		const { scrolling, scale } = this.state;
+		if (scrolling) {
+			let { panCoords, viewport } = this.state;
+			const { clientX, clientY } = normalizeTouchPosition(event, artboardsWrapper);
+			const { width, height } = artboardsWrapper.current.getBoundingClientRect();
+
+			if (0 <= clientX && clientX <= width && 0 <= clientY && clientY <= height) {
+				const dx = clientX - viewport.oldX;
+				const dy = clientY - viewport.oldY;
+
+				viewport.oldX = clientX;
+				viewport.oldY = clientY;
+
+				const sdx = dx / (width * (scale + viewport.scale));
+				const sdy = dy / (height * (scale + viewport.scale));
+
+				panCoords.incX -= sdx;
+				panCoords.incY -= sdy;
+
+				const p1 = transformPoint({ x : 0.5, y : 0.5 }, panCoords, scale);
+				viewport.x = -Math.round((p1.x * viewport.width) + ((viewport.width * -0.5) * scale));
+				viewport.y = -Math.round((p1.y * viewport.height) + ((viewport.height * -0.5) * scale));
+
+				console.log('InspectorPage.handleMouseMove()', viewport);
+
+				artboardsWrapper.current.scrollTop = viewport.y;
+				artboardsWrapper.current.scrollLeft = viewport.x;
+
+				panCoords.x += panCoords.incX;
+				panCoords.y += panCoords.incY;
+
+				this.setState({ panCoords, viewport });
+			}
+		}
 	};
 
-	handlePanMove = (x, y)=> {
-// 		console.log('InspectorPage.handlePanMove()', x, y);
+	handleMouseUp = (event)=> {
+// 		console.log('InspectorPage.handleMouseUp()', event);
 
-		const { scale, viewport } = this.state;
-		const p1 = this.transformPoint({ x : 0.5, y : 0.5 });
-		const scrollOffset = {
-			x : -Math.round((p1.x * viewport.width) + ((viewport.width * -0.5) * scale)),
-			y : -Math.round((p1.y * viewport.height) + ((viewport.height * -0.5) * scale))
-		};
+		const { scrolling, scale } = this.state;
+		if (scrolling) {
+			document.removeEventListener('mousemove', this.handleMouseMove.bind(this));
+			document.removeEventListener('mouseup', this.handleMouseUp.bind(this));
 
-		const panCoords = { x, y };
-		const scrolling = true;
-		this.setState({ panCoords, scrollOffset, scrolling });
-	};
 
-	handlePanStart = (event)=> {
-// 		console.log('InspectorPage.handlePanStart()', event);
+			let { panCoords, viewport } = this.state;
+			const { clientX, clientY } = normalizeTouchPosition(event, artboardsWrapper);
+			const { width, height } = artboardsWrapper.current.getBoundingClientRect();
+
+			if (0 <= clientX && clientX <= width && 0 <= clientY && clientY <= height) {
+				const dx = clientX - viewport.oldX;
+				const dy = clientY - viewport.oldY;
+				viewport.oldX = clientX;
+				viewport.oldY = clientY;
+				const sdx = dx / (width * (scale + viewport.scale));
+				const sdy = dy / (height * (scale + viewport.scale));
+				panCoords.incX -= sdx;
+				panCoords.incY -= sdy;
+
+				panCoords.x += panCoords.incX;
+				panCoords.y += panCoords.incY;
+
+				const p1 = transformPoint({ x : 0.5, y : 0.5 }, panCoords, scale);
+				viewport.x = -Math.round((p1.x * viewport.width) + ((viewport.width * -0.5) * scale));
+				viewport.y = -Math.round((p1.y * viewport.height) + ((viewport.height * -0.5) * scale));
+
+
+				artboardsWrapper.current.scrollTop = viewport.y;
+				artboardsWrapper.current.scrollLeft = viewport.x;
+
+				this.setState({ panCoords, viewport, scrolling : false });
+			}
+		}
 	};
 
 	handlePartItem = (sliceID)=> {
@@ -683,40 +765,89 @@ class InspectorPage extends Component {
 		this.setState({ selectedTab : ind });
 	};
 
+	handleWheelStart = (event)=> {
+		console.log('InspectorPage.handleWheelStart()', event.type, event.deltaX, event.deltaY, event.target);
+		//console.log('wheel', artboardsWrapper.current.clientWidth, artboardsWrapper.current.clientHeight, artboardsWrapper.current.scrollTop, artboardsWrapper.current.scrollLeft);
+
+// 		event.preventDefault();
+
+		this.lastScroll = (new Date()).getUTCSeconds();
+		clearTimeout(this.scrollInterval);
+		this.scrollInterval = setTimeout(this.handleWheelStop, 50);
+
+
+		if (!this.state.scrolling) {
+			this.setState({ scrolling : true });
+		}
+
+		if (event.ctrlKey) {
+			event.preventDefault();
+			this.setState({
+				scale   : Math.min(Math.max(this.state.scale - (event.deltaY * 0.0025), 0.03), 3).toFixed(2),
+				tooltip : Math.floor(Math.min(Math.max(this.state.scale - (event.deltaY * 0.0025), 0.03), 3).toFixed(2) * 100) + '%'
+			});
+
+		} else {
+			if (artboardsWrapper.current) {
+				artboardsWrapper.current.scrollTop += event.deltaY * 0.01;
+				artboardsWrapper.current.scrollLeft += event.deltaX * 0.01;
+
+				const { viewport } = this.state;
+				this.setState({
+					viewport : {
+						oldX   : viewport.oldX,
+						oldY   : viewport.oldY,
+						x      : artboardsWrapper.current.scrollLeft,
+						y      : artboardsWrapper.current.scrollTop,
+						width  : viewport.width,
+						height : viewport.height,
+						scale  : viewport.scale
+					}
+				});
+			}
+		}
+	};
+
+	handleWheelStop = ()=> {
+		console.log('InspectorPage.handleWheelStop()');
+
+		clearTimeout(this.scrollInterval);
+		this.setState({ scrolling : false });
+	};
+
 	handleZoom = (direction)=> {
 // 		console.log('InspectorPage.handleZoom()', direction);
 
-		const { panCoords, scale } = this.state;
-
-		if (direction === 0) {
-			this.handlePanAndZoom(panCoords.x + 0.01, panCoords.y + 0.01, ZOOM_NOTCHES[4]);
-
-		} else {
-			let ind = -1;
-			ZOOM_NOTCHES.forEach((amt, i)=> {
-				if (amt === scale) {
-					ind = i + direction;
-				}
-			});
-
-			ZOOM_NOTCHES.forEach((amt, i)=> {
-				if (ind === -1) {
-					if (direction > 0) {
-						if (amt > scale) {
-							ind = i;
-						}
-
-					} else {
-						if (amt > scale) {
-							ind = i - 1;
-						}
-					}
-				}
-			});
-
-
-			this.handlePanAndZoom(panCoords.x + 0.01, panCoords.y + 0.01, ZOOM_NOTCHES[Math.min(Math.max(0, ind), ZOOM_NOTCHES.length - 1)]);
-		}
+// 		const { panCoords, scale } = this.state;
+//
+// 		if (direction === 0) {
+// 			this.handlePanAndZoom(panCoords.x + 0.01, panCoords.y + 0.01, ZOOM_NOTCHES[4]);
+//
+// 		} else {
+// 			let ind = -1;
+// 			ZOOM_NOTCHES.forEach((amt, i)=> {
+// 				if (amt === scale) {
+// 					ind = i + direction;
+// 				}
+// 			});
+//
+// 			ZOOM_NOTCHES.forEach((amt, i)=> {
+// 				if (ind === -1) {
+// 					if (direction > 0) {
+// 						if (amt > scale) {
+// 							ind = i;
+// 						}
+//
+// 					} else {
+// 						if (amt > scale) {
+// 							ind = i - 1;
+// 						}
+// 					}
+// 				}
+// 			});
+//
+// 			this.handlePanAndZoom(panCoords.x + 0.01, panCoords.y + 0.01, ZOOM_NOTCHES[Math.min(Math.max(0, ind), ZOOM_NOTCHES.length - 1)]);
+// 		}
 	};
 
 	onDrop = (files)=> {
@@ -1087,7 +1218,7 @@ class InspectorPage extends Component {
 	};
 
 	onUpdateCanvas = ()=> {
-		const { scale, offset, scrollOffset } = this.state;
+		const { scale, offset, viewport } = this.state;
 		const { slice, hoverSlice } = this.state;
 		const context = canvas.current.getContext('2d');
 		context.clearRect(0, 0, canvas.current.clientWidth, canvas.current.clientHeight);
@@ -1099,8 +1230,8 @@ class InspectorPage extends Component {
 		if (slice) {
 			const selectedSrcFrame = slice.meta.frame;
 			const selectedOffset = {
-				x : offset.x - scrollOffset.x,
-				y : offset.y - scrollOffset.y
+				x : offset.x - viewport.x,
+				y : offset.y - viewport.y
 			};
 
 			const selectedFrame = {
@@ -1143,8 +1274,8 @@ class InspectorPage extends Component {
 			const srcFrame = hoverSlice.meta.frame;
 
 			const hoverOffset = {
-				x : this.state.hoverOffset.x - scrollOffset.x,
-				y : this.state.hoverOffset.y - scrollOffset.y
+				x : this.state.hoverOffset.x - viewport.x,
+				y : this.state.hoverOffset.y - viewport.y
 			};
 
 			const frame = {
@@ -1211,15 +1342,6 @@ class InspectorPage extends Component {
 		}
 	};
 
-	transformPoint = ({ x, y })=> {
-// 		console.log('InspectorPage.transformPoint()', x, y);
-		const { panCoords, scale } = this.state;
-		return ({
-			x : 0.5 + (scale * (x - panCoords.x)),
-			y : 0.5 + (scale * (y - panCoords.y))
-		});
-	};
-
 
 	render() {
 		const { profile } = this.props;
@@ -1229,7 +1351,7 @@ class InspectorPage extends Component {
 
 
 		const activeSlice = (hoverSlice) ? hoverSlice : slice;
-		const p1 = this.transformPoint({ x : 0.5, y : 0.5 });
+		const p1 = transformPoint({ x : 0.5, y : 0.5 }, panCoords, scale);
 		const artboards = (upload) ? upload.pages.flatMap((page)=> {
 			return (page.artboards);
 		}) : [];
@@ -1237,8 +1359,8 @@ class InspectorPage extends Component {
 
 		const artboardsStyle = {
 			position  : 'absolute',
-			width     : `${viewport.width * scale}px`,
-			height    : `${viewport.height * scale}px`,
+// 			width     : `${viewport.width * scale}px`,
+// 			height    : `${viewport.height * scale}px`,
 			transform : `translate(${p1.x * viewport.width}px, ${p1.y * viewport.height}px) translate(${(viewport.width * -0.5) * scale}px, ${(viewport.height * -0.5) * scale}px)`
 		};
 
@@ -1387,7 +1509,7 @@ class InspectorPage extends Component {
 		slices = (!restricted) ? slices : [];
 
 
-// 		console.log('InspectorPage.render()', this.state);
+// 		console.log('InspectorPage.render()', this.state, artboardsWrapper.current);
 
 // 		console.log('InspectorPage.render()', this.props, this.state);
 // 		console.log('InspectorPage.render()', (artboardsWrapper.current) ? artboardsWrapper.current.scrollTop : 0, (artboardsWrapper.current) ? artboardsWrapper.current.scrollLeft : 0, scale);
@@ -1399,30 +1521,15 @@ class InspectorPage extends Component {
 			</div>)}
 			<div className="page-wrapper inspector-page-wrapper">
 				<div className="inspector-page-content">
-					<InteractiveDiv
-						x={panCoords.x}
-						y={panCoords.y}
-						scale={scale}
-						scaleFactor={ZOOM_FACTOR}
-						minScale={ZOOM_NOTCHES[0]}
-						maxScale={ZOOM_NOTCHES.slice(-1)[0]}
-						onPanAndZoom={this.handlePanAndZoom}
-						ignorePanOutside={true}
-						renderOnChange={true}
-						style={{ width : '100%', height : '100%' }}
-						onPanStart={this.handlePanStart}
-						onPanMove={this.handlePanMove}
-						onPanEnd={this.handlePanEnd}>
-						<div className="inspector-page-artboards-wrapper" ref={artboardsWrapper}>
-							{(artboards.length > 0) && (<div style={artboardsStyle}>
-								{artboardImages}
-								<div className="inspector-page-canvas-wrapper" style={canvasStyle} ref={canvasWrapper}>
-									<canvas width={(artboardsWrapper.current) ? artboardsWrapper.current.clientWidth : 0} height={(artboardsWrapper.current) ? artboardsWrapper.current.clientHeight : 0} ref={canvas}>Your browser does not support the HTML5 canvas tag.</canvas>
-								</div>
-								{slices}
-							</div>)}
-						</div>
-					</InteractiveDiv>
+					<div className="inspector-page-artboards-wrapper" ref={artboardsWrapper}>
+						{(artboards.length > 0) && (<div style={artboardsStyle}>
+							{artboardImages}
+							<div className="inspector-page-canvas-wrapper" style={canvasStyle} ref={canvasWrapper}>
+								<canvas width={(artboardsWrapper.current) ? artboardsWrapper.current.clientWidth : 0} height={(artboardsWrapper.current) ? artboardsWrapper.current.clientHeight : 0} ref={canvas}>Your browser does not support the HTML5 canvas tag.</canvas>
+							</div>
+							{slices}
+						</div>)}
+					</div>
 					{(artboards.length > 0) && (<div className="inspector-page-zoom-wrapper">
 						<button disabled={(scale >= Math.max(...ZOOM_NOTCHES))} className="inspector-page-float-button" onClick={()=> {trackEvent('button', 'zoom-in'); this.handleZoom(1)}}><img className="inspector-page-float-button-image" src={(scale < Math.max(...ZOOM_NOTCHES)) ? enabledZoomInButton : disabledZoomInButton} alt="+" /></button><br />
 						<button disabled={(scale <= Math.min(...ZOOM_NOTCHES))} className="inspector-page-float-button" onClick={()=> {trackEvent('button', 'zoom-out'); this.handleZoom(-1)}}><img className="inspector-page-float-button-image" src={(scale > Math.min(...ZOOM_NOTCHES)) ? enabledZoomOutButton : disabledZoomOutButton} alt="-" /></button><br />
